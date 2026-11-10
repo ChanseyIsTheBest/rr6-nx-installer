@@ -20,7 +20,7 @@ import shutil
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RELEASE = os.path.join(HERE, 'release')
-VERSION = '1.0.0'
+VERSION = '1.0.1'
 
 
 def sha256(path):

@@ -1,11 +1,11 @@
 {
-  "version": "1.0.0",
+  "version": "1.0.1",
   "builds": [
     {
       "edition": "Xbox 360 disc",
       "xex_sha256": "487952c4306ddd4a0f418702cb8cb18f28f2820e0129680e99dcf9aa20a8f6f9",
       "nro": "rr6-nx.nro",
-      "nro_sha256": "cfab09b6dc0a3dd5220d71769aa31069c1116acc0be32bdc33111153884d400e",
+      "nro_sha256": "1d14c9af57efdae47c3709f88eeb1d052d1d8f81815ac22a7fb947d2b1f555f2",
       "files": [
         {
           "path": "config.toml",

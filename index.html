@@ -55,7 +55,7 @@
     <img class="icon" src="./icon.jpg" alt="Ridge Racer 6" width="168" height="168">
     <p class="lead">Builds the <strong>Nintendo Switch</strong> package of <strong>Ridge Racer 6</strong> from your own copy.
       Everything runs in <strong>this browser</strong>: nothing is uploaded.</p>
-    <span class="proto">version 1.0.0</span>
+    <span class="proto">version 1.0.1</span>
   </header>
 
   <section>
@@ -85,9 +85,10 @@
   <section>
     <h2>3. Create the package</h2>
     <button id="create" class="primary" disabled>Create rr6-nx.zip</button>
-    <p class="note">The three RRM archives are packed with LZ4 (level 9, 256 KB blocks) on all of this computer's cores:
-      about 600 MB smaller on the SD card, and read as they were by the game. The zip downloads while it is written (about
-      5.5 GB, more with the DLC).</p>
+    <p class="note">The game files are packed on all of this computer's cores: the three RRM archives with LZ4 (level 9,
+      256 KB blocks), the videos, the music and the sounds with ZXC (level 7, 512 KB blocks). About 800 MB smaller on the
+      SD card, and read as they were by the game. The zip downloads while it is written (about 5.3 GB, more with the
+      DLC).</p>
     <progress id="bar" max="1" value="0" hidden></progress>
     <div id="log" role="log" aria-live="polite"></div>
   </section>
@@ -95,8 +96,9 @@
   <section>
     <h2>4. Copy it to the Switch</h2>
     <ol>
-      <li>If you have an older rr6-nx, delete its <code>switch/rr6-nx/game_root</code> folder first: an unpacked
-        <code>RRM.DAT</code> left there is used instead of the packed one, and saves nothing.</li>
+      <li>If you have an older rr6-nx, delete its <code>switch/rr6-nx/game_root</code> folder first: an unpacked file
+        left there (an <code>RRM.DAT</code>, or 1.0.0's videos and music) is used instead of the packed one, and saves
+        nothing.</li>
       <li>Extract <code>rr6-nx.zip</code> to the root of the SD card: it makes <code>switch/rr6-nx/</code>.</li>
       <li>In <strong>Sphaira</strong>, find Ridge Racer 6, press X to open Options and choose <strong>Install Forwarder</strong>.
         Make sure <strong>Address Space</strong> is set to <strong>39-bit</strong>, choose <strong>Create Forwarder</strong>,
@@ -109,7 +111,7 @@
 
   <footer>
     <p>rr6-nx by ChanseyIsTheBest. Made from kameo-nx-installer and renut-nx-webinstaller (GPL-3.0); LZ4 by Yann Collet
-      (BSD 2-Clause). See NOTICES.md. Ridge Racer is a trademark of Bandai Namco; not affiliated with or endorsed by Bandai
+      (BSD 2-Clause), ZXC by Bertrand Lebonnois (BSD 3-Clause). See NOTICES.md. Ridge Racer is a trademark of Bandai Namco; not affiliated with or endorsed by Bandai
       Namco or Nintendo.</p>
   </footer>
 </main>

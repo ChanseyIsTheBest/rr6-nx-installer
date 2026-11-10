@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """rr6-nx-installer (2026-11-10): checks an rr6-nx.zip the page made against the game folder it was made from and
 release/: the zip's CRCs (zipfile), every game_root file byte for byte, every .lz4b entry's blocks decompressed and
-compared with the original archive, and the release files by SHA-256 (manifest.json).
+compared with the original file, and the release files by SHA-256 (manifest.json).
+
+2026-11-11, lib/lz4b.js's rule: the RRM archives are version-1 (LZ4) entries, decoded here; every other file but
+default.xex is a version-2 (ZXC) entry, written to a temporary file and read through rr6-nx's own reader by its host test
+(tools/test_lz4_blocks.cpp's exe: RR6_LZ4B_TEST, default D:/ridge racer 6/rr6-nx/out/test_lz4_blocks.exe; Python has no
+ZXC); default.xex is copied as it is.
 
   python test/check_zip.py <rr6-nx.zip> <game folder>
 
@@ -10,14 +15,49 @@ Needs the lz4 module. Game data: never commit or share the zip.
 import hashlib
 import json
 import os
+import re
+import shutil
 import struct
+import subprocess
 import sys
+import tempfile
 import zipfile
 
 import lz4.block
 
 HERE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROOT = 'switch/rr6-nx/'
+READER_TEST = os.environ.get('RR6_LZ4B_TEST', r'D:/ridge racer 6/rr6-nx/out/test_lz4_blocks.exe')
+
+
+def codec_for(name):
+    """lib/lz4b.js's codecFor."""
+    upper = name.upper()
+    if re.fullmatch(r'RRM\d*\.DAT', upper):
+        return 'lz4'
+    return None if upper == 'DEFAULT.XEX' else 'zxc'
+
+
+def check_zxc(z, info, original):
+    """A version-2 entry through rr6-nx's reader: the whole file and 2,000 random reads compared with the original."""
+    with z.open(info) as f:
+        magic, version, block, size, count, _ = struct.unpack('<8sIIQII', f.read(32))
+    assert magic == b'RXLZ4BLK' and version == 2, 'header'
+    assert size == os.path.getsize(original), f'holds {size} bytes, the original has {os.path.getsize(original)}'
+    fd, temp = tempfile.mkstemp(suffix='.lz4b')
+    try:
+        with os.fdopen(fd, 'wb') as out, z.open(info) as f:
+            shutil.copyfileobj(f, out, 1 << 20)
+        env = dict(os.environ)
+        clang64 = r'C:/devkitPro/msys2/clang64/bin'
+        if os.path.isdir(clang64):
+            env['PATH'] = clang64 + os.pathsep + env.get('PATH', '')
+        r = subprocess.run([READER_TEST, temp, original, '2000'], capture_output=True, text=True, env=env)
+        if r.returncode != 0 or not r.stdout.startswith('OK'):
+            raise AssertionError('rr6-nx reader: ' + (r.stdout + r.stderr).strip()[-300:])
+    finally:
+        os.remove(temp)
+    return size, info.file_size, count
 
 
 def check_lz4b(z, info, original):
@@ -62,14 +102,16 @@ def main():
         packed_in = packed_out = 0
         for name in game_files:
             original = os.path.join(game, name)
-            if name.upper() in ('RRM.DAT', 'RRM2.DAT', 'RRM3.DAT'):
+            codec = codec_for(name)
+            if codec:
                 entry = ROOT + 'game_root/' + name + '.lz4b'
                 if ROOT + 'game_root/' + name in names:
                     raise SystemExit(f'FAIL: {name} is in the zip unpacked too')
-                size, packed, count = check_lz4b(z, z.getinfo(entry), original)
+                check = check_lz4b if codec == 'lz4' else check_zxc
+                size, packed, count = check(z, z.getinfo(entry), original)
                 packed_in += size
                 packed_out += packed
-                print(f'{entry}: {count} blocks equal {name} ({packed / size * 100:.1f} %)')
+                print(f'{entry} ({codec}): {count} blocks equal {name} ({packed / size * 100:.1f} %)')
             else:
                 entry = ROOT + 'game_root/' + name
                 h = hashlib.sha256()
@@ -82,7 +124,7 @@ def main():
                         o.update(piece)
                 if h.digest() != o.digest():
                     raise SystemExit(f'FAIL: {entry} differs from {name}')
-        print(f'game_root: {len(game_files)} files right; the archives {packed_in / 1048576:.0f} MB -> '
+        print(f'game_root: {len(game_files)} files right; the packed ones {packed_in / 1048576:.0f} MB -> '
               f'{packed_out / 1048576:.0f} MB')
     print('OK')
 

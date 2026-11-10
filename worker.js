@@ -3,13 +3,15 @@
 // nfsmw-nx-installer's download stream, GPL-3.0).
 //
 // rr6-nx carries its shaders (Ridge Racer 6 keeps all 176 in default.xex), so the page makes none: it checks the game,
-// packs the three RRM archives as LZ4 blocks (lib/lz4b.js on lz4_worker.js, one per core) and writes the zip.
-import { pack, SUFFIX } from './lib/lz4b.js';
+// packs the game files (lib/lz4b.js on pack_worker.js, one per core: the three RRM archives as LZ4 blocks, every other
+// file but default.xex as ZXC blocks, 2026-11-11) and writes the zip.
+import { CODECS, codecFor, pack, SUFFIX } from './lib/lz4b.js';
 import { workerPool } from './lib/pool.js';
 import { ZipWriter } from './lib/zip.js';
 
 const ROOT = 'switch/rr6-nx';
-const PACKED = new Set(['RRM.DAT', 'RRM2.DAT', 'RRM3.DAT']);
+// The share of a file left after packing, for the size of the download before it is known (rr6-nx's measures).
+const KEPT = { lz4: 0.80, zxc: 0.94 };
 const log = (text) => postMessage({ type: 'log', text });
 
 async function fetchBytes(url) {
@@ -79,13 +81,13 @@ async function* chunks(file, size = 8 << 20) {
   for (let at = 0; at < file.size; at += size) yield await file.read(at, Math.min(size, file.size - at));
 }
 
-// count lz4_worker.js workers, each started and ready, as lib/pool.js takes them
+// count pack_worker.js workers, each started and ready, as lib/pool.js takes them
 function startWorkers(count) {
   return Promise.all(Array.from({ length: count }, () => new Promise((resolve, reject) => {
-    const w = new Worker('./lz4_worker.js', { type: 'module' });
-    w.onerror = (e) => reject(new Error(`lz4_worker.js: ${e.message}`));
+    const w = new Worker('./pack_worker.js', { type: 'module' });
+    w.onerror = (e) => reject(new Error(`pack_worker.js: ${e.message}`));
     w.addEventListener('message', ({ data }) => {
-      if (data.ready) resolve({ w, version: data.version, post: (m, t) => w.postMessage(m, t),
+      if (data.ready) resolve({ w, version: data.version, zxcVersion: data.zxcVersion, post: (m, t) => w.postMessage(m, t),
                                 onMessage: (cb) => w.addEventListener('message', ({ data: d }) => cb(d)) });
     }, { once: true });
   })));
@@ -112,10 +114,12 @@ self.onmessage = async ({ data }) => {
     // the packing workers: one per core but one (the zip and the reads run here)
     const cores = Math.max(1, Math.min(16, (navigator.hardwareConcurrency || 4) - 1));
     workers = await startWorkers(cores);
-    const lz4 = workerPool(workers);
-    const compress = (bytes, level) => lz4.run({ bytes, level }, [bytes.buffer]).then((r) => r.bytes);
-    const v = workers[0].version;
-    log(`LZ4 ${Math.floor(v / 10000)}.${Math.floor(v / 100) % 100}.${v % 100} ready on ${cores} threads (${seconds()} s).`);
+    const pool = workerPool(workers);
+    const compress = (bytes, codec) =>
+      pool.run({ bytes, codec, level: CODECS[codec].level, block: CODECS[codec].block }, [bytes.buffer]).then((r) => r.bytes);
+    const version = (v) => `${Math.floor(v / 10000)}.${Math.floor(v / 100) % 100}.${v % 100}`;
+    log(`LZ4 ${version(workers[0].version)} and ZXC ${version(workers[0].zxcVersion)} ready on ${cores} threads ` +
+        `(${seconds()} s).`);
 
     const dlc = gameFiles(data.dlc || []);
     const game = files.filter((f) => !f.path.startsWith('$SystemUpdate/'));
@@ -123,8 +127,8 @@ self.onmessage = async ({ data }) => {
                     dlc.reduce((n, f) => n + f.size, 0);
     let doneIn = 0;
     const counted = (n) => { doneIn += n; postMessage({ type: 'progress', fraction: doneIn / totalIn }); };
-    // the zip's size is known only once the archives are packed: the download starts without one (about 80 % of them)
-    const estimate = totalIn - game.filter((f) => PACKED.has(f.path.toUpperCase())).reduce((n, f) => n + f.size, 0) * 0.2;
+    // the zip's size is known only once the files are packed: the download starts without one (KEPT of each)
+    const estimate = totalIn - game.reduce((n, f) => n + (codecFor(f.path) ? f.size * (1 - KEPT[codecFor(f.path)]) : 0), 0);
     postMessage({ type: 'start', estimate });
 
     const zip = new ZipWriter(sink);
@@ -132,16 +136,21 @@ self.onmessage = async ({ data }) => {
     for (const f of extras) { await zip.addBytes(`${ROOT}/${f.path}`, f.bytes); counted(f.bytes.length); }
     let packedIn = 0, packedOut = 0;
     for (const f of game) {
-      if (PACKED.has(f.path.toUpperCase())) {
+      const codec = codecFor(f.path);
+      if (codec) {
         const t0 = performance.now();
-        log(`Packing ${f.path} (${(f.size / 1048576).toFixed(0)} MB)...`);
+        // the large files by name (the RRM archives and the videos over 50 MB); the small ones only in the summary
+        const named = f.size > 50 * 1048576;
+        if (named) log(`Packing ${f.path} (${(f.size / 1048576).toFixed(0)} MB, ${codec.toUpperCase()})...`);
         const size = await zip.addStream(`${ROOT}/game_root/${f.path}${SUFFIX}`,
-                                         pack(f, compress, { inFlight: cores * 4, onRaw: counted }));
+                                         pack(f, compress, { codec, inFlight: cores * 4, onRaw: counted }));
         packedIn += f.size;
         packedOut += size;
         const s = (performance.now() - t0) / 1000;
-        log(`  ${f.path}${SUFFIX}: ${(size / 1048576).toFixed(0)} MB (${(size / f.size * 100).toFixed(1)} %), ` +
-            `${s.toFixed(0)} s (${(f.size / 1048576 / Math.max(s, 0.001)).toFixed(0)} MB/s)`);
+        if (named) {
+          log(`  ${f.path}${SUFFIX}: ${(size / 1048576).toFixed(0)} MB (${(size / f.size * 100).toFixed(1)} %), ` +
+              `${s.toFixed(0)} s (${(f.size / 1048576 / Math.max(s, 0.001)).toFixed(0)} MB/s)`);
+        }
       } else {
         await zip.addFile(`${ROOT}/game_root/${f.path}`, f.size, chunks(f), (c) => counted(c.length));
       }
@@ -150,7 +159,7 @@ self.onmessage = async ({ data }) => {
       await zip.addFile(`${ROOT}/dlc/${f.path}`, f.size, chunks(f), (c) => counted(c.length));
     }
     const total = await zip.finish();
-    log(`The archives: ${(packedIn / 1048576).toFixed(0)} MB packed to ${(packedOut / 1048576).toFixed(0)} MB, ` +
+    log(`The game files: ${(packedIn / 1048576).toFixed(0)} MB packed to ${(packedOut / 1048576).toFixed(0)} MB, ` +
         `${((packedIn - packedOut) / 1048576).toFixed(0)} MB saved.`);
     for (const x of workers) x.w.terminate();
     postMessage({ type: 'done', seconds: seconds(), size: total });
