@@ -1,106 +1,81 @@
-# kameo-nx-installer
+# rr6-nx-installer
 
-Version 1.0.1, for **kameo-nx 1.0.1**: Kameo: Elements of Power on the Nintendo Switch (homebrew), by ChanseyIsTheBest.
+Version 1.0.0, for **rr6-nx 1.0.0**: Ridge Racer 6 on the Nintendo Switch (homebrew), by ChanseyIsTheBest.
 
 This page makes the Switch package from **your own copy** of the game. It runs entirely in your browser: your game files are
-not uploaded, and none of the game's files come with kameo-nx.
+not uploaded, and none of the game's files come with rr6-nx.
 
 ## What you need
 
-- Your **Xbox 360 disc** of Kameo: Elements of Power (NTSC-U or PAL) as an `.iso` image, or the folder it was extracted to,
-  with `default.xex` and the `.lvl` files in it.
-- **Title update 2** for that disc, its Xbox 360 package: `TU_16L61UI_0000000000000.00000000000G1` (in the update's `6C8AE566`
-  folder) for the NTSC-U disc, `TU_16L61UI_000000K000000.00000000000G5` (folder `45BB5521`) for the PAL disc. kameo-nx is
-  the updated game, so this is required.
-- Optional: the **DLC** packs (Add-On, Design-A-Skin, Power and Winter Warrior).
-- A desktop **Chromium browser** (Chrome, Edge, Brave...), about 8 GB of free memory and 7 GB of free disk space for the
-  download.
-- A Switch that runs homebrew (Atmosphère) with **Sphaira**, and an SD card with at least 8 GB free.
+- Your **Xbox 360 disc** of Ridge Racer 6 as an `.iso` image, or the folder it was extracted to, with `default.xex` and the
+  `RRM.DAT`, `RRM2.DAT` and `RRM3.DAT` archives in it.
+- Optional: the game's **DLC** packages (music packs, cars), as the Xbox 360 packages you have.
+- A desktop **Chromium browser** (Chrome, Edge, Brave...) and about 6 GB of free disk space for the download.
+- A Switch that runs homebrew (Atmosphère) with **Sphaira**, and an SD card with about 6 GB free.
 
 ## How to use it
 
-1. Open the page: **https://chanseyisthebest.github.io/kameo-nx-installer/**
+1. Open the page. To run it on your own computer: `python serve.py 8193 .` in this folder, then open
+   http://127.0.0.1:8193/.
 2. **Choose your game**: the disc image (`.iso`) or the extracted folder. The page checks that it is the supported version.
-3. **Choose title update 2** (and the DLC packs, at the same time, if you have them).
-4. Choose **who compiles the shaders**. Leave it on **This page**: see
-   [Letting the Switch compile the shaders](#letting-the-switch-compile-the-shaders).
-5. Press **Create kameo-nx.zip**. The zip downloads while it is made; keep the page open until it finishes.
-6. Extract `kameo-nx.zip` to the **root of the SD card**. It makes `switch/kameo-nx/`.
-7. On the Switch, open **Sphaira**, find Kameo: Elements of Power, press **X** to open Options and choose **Install Forwarder**.
-   Make sure **Address Space** is set to **39-bit**, choose **Create Forwarder**, then start the game from the **Home Screen**.
-   This lets the game use all four CPU cores, which it cannot do through a title takeover. The first start sets this up;
-   from the second start on it runs on four cores.
+3. Optional: **add the DLC** packages, or a folder of them.
+4. Press **Create rr6-nx.zip**. The zip downloads while it is made; keep the page open until it finishes.
+5. If you have an older rr6-nx, delete its `switch/rr6-nx/game_root` folder first: an unpacked `RRM.DAT` left there is used
+   instead of the packed one.
+6. Extract `rr6-nx.zip` to the **root of the SD card**. It makes `switch/rr6-nx/`.
+7. On the Switch, open **Sphaira**, find Ridge Racer 6, press **X** to open Options and choose **Install Forwarder**, make
+   sure **Address Space** is **39-bit**, choose **Create Forwarder**, then start the game from the **Home Screen**.
 
-On a PC with 16 threads, the whole build with all the DLC took about 7.5 minutes in a browser, 4.5 of them for the shaders.
-The zip is about 6 GB.
+## Smaller game files
 
-To run the page on your own computer: `python serve.py 8193 .` in this folder, then open http://127.0.0.1:8193/.
+The three RRM archives (3 GB) are packed with **LZ4 HC level 9 in 256 KB blocks**, on all of the computer's cores, and go to
+the SD card as `RRM.DAT.lz4b`, `RRM2.DAT.lz4b` and `RRM3.DAT.lz4b`: about 2.4 GB, 600 MB less. rr6-nx reads them as the
+files they were (`sdk/src/filesystem/lz4_blocks.cpp` in rr6-nx), decompressing only the blocks a read needs. The music and
+the videos are compressed already and are copied as they are.
 
-## Letting the Switch compile the shaders
-
-**Not recommended.** With **The Switch, as you play** the page still makes the game's shaders from your files, but leaves them
-for the console to compile, so it finishes sooner. The game then stops each time it first needs a shader, often for minutes in
-a new area, and runs slower for a long time afterwards.
+The format (`lib/lz4b.js`), little-endian: a 32-byte header (`RXLZ4BLK`, version 1, the block size, the file's size, the
+block count), the blocks in LZ4's block format back to back (a block that does not get smaller is stored as it is), a u32
+per block with its stored size, and a 16-byte footer (the index's offset, `RXLZ4END`). rr6-nx's `tools/lz4b_pack.py` makes
+and checks the same files on a PC.
 
 ## Settings
 
-`switch/kameo-nx/kameo.toml` holds the settings you may want to change, with a comment on each: the language (by default the
-Switch's system language), anti-aliasing, dynamic resolution, the frame cap, four-core mode, logs and the controls. Delete it
-and the game writes it again at the next start.
+`switch/rr6-nx/config.toml` holds your options, with a comment on each: the language (by default the Switch's), SMAA, the
+game's MSAA (off by default), rumble (on), the DLC's car Unlock Keys (off: the music packs always load) and the
+controls. Every other setting is built into the NRO. Delete the file and the game
+writes it again at the next start.
 
 ## If something goes wrong
 
-- Crash logs are written to `switch/kameo-nx/logs/rex/rex_crash.log`.
-- For a bug report, open `kameo.toml`, remove the `#` in front of `log_level = "info"`, play until the problem happens, and send
-  the `switch/kameo-nx/logs/` folder.
-- The page says the game or the update is not supported: kameo-nx supports the NTSC-U and the PAL Xbox 360 discs, each with
-  its own title update 2, and nothing else. The update must be the one of your disc's media ID.
+- Crash logs are written to `switch/rr6-nx/logs/`.
+- The page says the game is not supported: rr6-nx supports one `default.xex`, the one the release's `manifest.json` names.
 
 ## How it works
 
 The rest of this file is for developers.
 
-The distribution NRO carries none of the game's assets, and none of its shaders but the 139 that no level or model file
-holds. The page makes everything else from the player's files:
+rr6-nx carries its shaders: Ridge Racer 6 keeps all 176 of them in `default.xex`, so unlike kameo-nx-installer this page
+translates and compiles nothing. It checks the game, packs the archives (`lib/lz4b.js`, on `lz4_worker.js` workers running
+`wasm/lz4.wasm`: LZ4 1.10.0's HC, built by `wasm/src/lz4/build.sh`), and streams `rr6-nx.zip` to a download through the
+service worker (`sw.js`). The zip's size is known only once the archives are packed, so the download starts without one.
 
-1. **The shaders' containers**: `py/kameo_dump.py` (kameo-nx's `tools/kameo_files.py`, in [Pyodide](https://pyodide.org)) on the
-   levels and models: Rare's CAFF archives, each section one zlib stream. 4,477 containers on the disc, 5,722 with the DLC
-   packs, which are read in place (`lib/stfs.js`, `lib/kameo_files.js`).
-2. **Renut's translator** (`wasm/renut_hlsl`, kameo-nx's XenosRecomp in WebAssembly, with the version 0x0E containers these
-   shaders use): each container's HLSL and the numbers of the NRO's shader table.
-3. **GLSL for the console**, on a pool of workers (`glsl_worker.js`): `renut_early_alpha.py` for pixel shaders, DXC,
-   SPIRV-Cross, `deko3d_glsl.py` and `deko3d_glsl_opt.py`, kameo-nx's Python tools unchanged in Pyodide.
-4. **deko3d_glsl.bin** (`lib/package.js`): the GLSL and the shader table, which the NRO reads next to itself.
-5. **deko3d_shaders.bin**: every shader variant of `release/variants.txt`, plus each shader as it is, compiled by uam in
-   WebAssembly (`wasm/uam`, the console's compiler). The NRO's own 139 shaders are read out of the NRO (`lib/nro.js`) and
-   compiled too. Skipped when the player lets the Switch compile.
-6. **Title update 2 and the DLC**: the update's `default.xexp` goes beside `default.xex` (checked against the manifest's
-   SHA-256), its language folders to `update/`, and each DLC package whole to `dlc/`.
-7. **kameo-nx.zip**, streamed to a download by the service worker (`sw.js`).
-
-The page's DXC is newer (v2025.1) than the native build's, so about a third of the shaders come out with different
-temporaries, and their GLSL and DKSH are not the native bytes. Two DLC shaders need SPIRV-Cross to run more recompile passes
-with this DXC's SPIR-V (`lib/chain.js`).
-
-## Release files
-
-`release/` is filled by `tools/make_release.py` from a kameo-nx distribution build. `manifest.json` names the supported
-`default.xex` and `default.xexp` by their SHA-256 and the SHA-256 of every release file; with `--reference` also those of the
-shader files a Node run made. `release/variants.txt` comes from kameo-nx's `tools/deko3d_variant_cache.py --export-variants`.
+`release/` is filled by `tools/make_release.py` from an rr6-nx tree: the NRO, `config.toml`, the DKSH cache
+(`deko3d_shaders.bin`) and `pipeline_list.bin`, with `manifest.json` naming each one's SHA-256 and the supported
+`default.xex`'s.
 
 ## Tests (Node 24, from this folder)
 
 | Test | What it checks |
 |---|---|
-| `test/full_node.mjs <game> <kameo-nx> <out> --nro=<NRO or its GLSL package>` | everything, as the page runs it, with the shader table and caches compared |
-| `test/browser.html` (with `python serve.py 8193 . --test-files <game>`) | `worker.js` in a browser, the zip read back |
+| `test/pack_node.mjs <out> <file>...` | the packer as the page runs it (`lib/lz4b.js`, `wasm/lz4.mjs` on worker threads); check its files with rr6-nx's `tools/lz4b_pack.py check` |
+| `test/browser.html` (with `python serve.py 8193 . --test-files <game>`) | `worker.js` in a browser, the zip read as it streams: every entry's CRC, and every packed archive's blocks against the original |
 
-Outputs of the tests (shader files, zips) are game data: never commit or share them.
+Outputs of the tests are game data: never commit or share them.
 
 ## License
 
 GPL-3.0 (see [LICENSE](LICENSE)). Third-party components are listed in [NOTICES.md](NOTICES.md). The page is built on
-[renut-nx-webinstaller](https://github.com/ChanseyIsTheBest/renut-nx-webinstaller).
+kameo-nx-installer and [renut-nx-webinstaller](https://github.com/ChanseyIsTheBest/renut-nx-webinstaller).
 
-Kameo: Elements of Power is a trademark of Microsoft; the icon artwork is © Microsoft. This project is not affiliated with or
-endorsed by Microsoft, Rare or Nintendo.
+Ridge Racer is a trademark of Bandai Namco Entertainment; the icon artwork is © Bandai Namco Entertainment. This project is
+not affiliated with or endorsed by Bandai Namco or Nintendo.

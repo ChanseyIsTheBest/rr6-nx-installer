@@ -1,4 +1,4 @@
-// banjo-nx-installer: serves the zip the page makes as a normal browser download, streamed while it is being made.
+// rr6-nx-installer (from kameo-nx-installer, banjo-nx-installer): serves the zip the page makes as a normal browser download, streamed while it is being made.
 // The download part of bejeweled3-nx-installer's sw.js (from nfsmw-nx-installer's, StevensND, GPL-3.0); the prototype
 // does not keep an offline copy of the page. The worker sends the zip through a MessagePort, one chunk per "pull", so
 // memory use stays bounded however big the zip is (the game alone is 6 GB).
@@ -48,11 +48,8 @@ function serveDownload(job) {
     },
     { highWaterMark: 4 },
   );
-  return new Response(stream, {
-    headers: {
-      'Content-Type': 'application/zip',
-      'Content-Disposition': `attachment; filename="${job.filename}"`,
-      'Content-Length': String(job.size),
-    },
-  });
+  // rr6-nx-installer: no Content-Length when the size is known only at the end (the archives packed as they stream)
+  const headers = { 'Content-Type': 'application/zip', 'Content-Disposition': `attachment; filename="${job.filename}"` };
+  if (Number.isFinite(job.size)) headers['Content-Length'] = String(job.size);
+  return new Response(stream, { headers });
 }

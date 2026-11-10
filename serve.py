@@ -7,7 +7,9 @@ From bejeweled3-nx-installer's serve.py (GPL-3.0); banjo-nx-installer adds /_tes
 test/browser.html: the browser test reads your game files from there without loading them whole. Only for testing
 on your own computer: the server listens on 127.0.0.1 only.
 --test-packages (renut-nx, 2026-11-01) serves a folder's files at /_pkg/ and their names at /_pkg_list: the title update
-and DLC packages test/browser.html gives the worker."""
+and DLC packages test/browser.html gives the worker.
+--test-out <file> (rr6-nx-installer, 2026-11-10): POST /_test_write?offset=N writes the request's body at offset N of that
+file (truncated at offset 0): test/browser.html saves the zip there as it streams, for test/check_zip.py."""
 import functools
 import json
 import http.server
@@ -23,6 +25,7 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     extensions_map = {**http.server.SimpleHTTPRequestHandler.extensions_map, **TYPES}
     test_files = None
     test_packages = None
+    test_out = None
 
     def end_headers(self):
         self.send_header('Cache-Control', 'no-store')
@@ -38,6 +41,25 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 return ''
             return full
         return None
+
+    def do_POST(self):
+        path, _, query = self.path.partition('?')
+        if not self.test_out or path != '/_test_write':
+            return self.send_error(404)
+        offset = int(urllib.parse.parse_qs(query).get('offset', ['0'])[0])
+        length = int(self.headers.get('Content-Length', '0'))
+        mode = 'wb' if offset == 0 else 'r+b'
+        with open(self.test_out, mode) as f:
+            f.seek(offset)
+            left = length
+            while left:
+                piece = self.rfile.read(min(left, 1 << 20))
+                if not piece:
+                    break
+                f.write(piece)
+                left -= len(piece)
+        self.send_response(204)
+        self.end_headers()
 
     def do_HEAD(self):
         full = self.test_path()
@@ -112,6 +134,10 @@ if __name__ == '__main__':
     if '--test-files' in args:
         at = args.index('--test-files')
         Handler.test_files = args[at + 1]
+        del args[at:at + 2]
+    if '--test-out' in args:
+        at = args.index('--test-out')
+        Handler.test_out = args[at + 1]
         del args[at:at + 2]
     if '--test-packages' in args:
         at = args.index('--test-packages')

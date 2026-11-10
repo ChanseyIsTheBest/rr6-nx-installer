@@ -1,47 +1,28 @@
 {
-  "version": 1,
+  "version": "1.0.0",
   "builds": [
     {
-      "edition": "Xbox 360 disc, NTSC-U, title update 2",
-      "xex_sha256": "ee97524c13b781e7f7168bdd8de415866d81db4b0225f032fbf3a49c6d0d891f",
-      "xexp_sha256": "01bb4a32010f45478c49d3b0e32bb8ee179e32e5dc1c67cabb492b643d19824d",
-      "nro": "kameo-nx.nro",
-      "nro_sha256": "3d9e381ea1e76809260ab2d9e9e913aa322400e7002d40827c67da827455bdc5",
+      "edition": "Xbox 360 disc",
+      "xex_sha256": "487952c4306ddd4a0f418702cb8cb18f28f2820e0129680e99dcf9aa20a8f6f9",
+      "nro": "rr6-nx.nro",
+      "nro_sha256": "cfab09b6dc0a3dd5220d71769aa31069c1116acc0be32bdc33111153884d400e",
       "files": [
         {
-          "path": "kameo.toml",
-          "source": "kameo.toml",
-          "sha256": "885485910b6aa38a8046217acb301f2a57fe0d03dd2ef62d0229b5f035b1635a"
+          "path": "config.toml",
+          "source": "config.toml",
+          "sha256": "86f13db22fd032ec0390a84e316c5ea753e9556f148facc21d967a8f2529841d"
+        },
+        {
+          "path": "deko3d_shaders.bin",
+          "source": "deko3d_shaders.bin",
+          "sha256": "3172b1e51d3908b5a768d2b32dde6568e4a33483c92aa65c33e11e40dc23abbd"
         },
         {
           "path": "pipeline_list.bin",
           "source": "pipeline_list.bin",
-          "sha256": "a068f1c257f81629b1421acc659377afa4b37ca00ff7ff393c96702786ac7f0c"
+          "sha256": "1abf2e362ca0f672640bd89d83206a8a698f354a56ac8bbaca56934e0452ac47"
         }
-      ],
-      "deko3d_glsl_sha256": "766bb63bd56d20312752afe99c1463a4a4735636041c2c5e32c0767a77a43f19",
-      "deko3d_shaders_sha256": "223051f3842c29f8e31a715b6dd0e62144aa88d7cc2b6b0c9f3c34f87c3373b1"
-    },
-    {
-      "edition": "Xbox 360 disc, PAL, title update 2",
-      "xex_sha256": "124d812f75f465d393134a84792412bf01a135ea1d6ea4eafef82aa4a5f739c4",
-      "xexp_sha256": "142443cf64d31b89cc647bb33104bbfce6021d06e3c700a914a2ee65281bad65",
-      "nro": "kameo-nx.nro",
-      "nro_sha256": "3d9e381ea1e76809260ab2d9e9e913aa322400e7002d40827c67da827455bdc5",
-      "files": [
-        {
-          "path": "kameo.toml",
-          "source": "kameo.toml",
-          "sha256": "885485910b6aa38a8046217acb301f2a57fe0d03dd2ef62d0229b5f035b1635a"
-        },
-        {
-          "path": "pipeline_list.bin",
-          "source": "pipeline_list.bin",
-          "sha256": "a068f1c257f81629b1421acc659377afa4b37ca00ff7ff393c96702786ac7f0c"
-        }
-      ],
-      "deko3d_glsl_sha256": "766bb63bd56d20312752afe99c1463a4a4735636041c2c5e32c0767a77a43f19",
-      "deko3d_shaders_sha256": "223051f3842c29f8e31a715b6dd0e62144aa88d7cc2b6b0c9f3c34f87c3373b1"
+      ]
     }
   ]
 }

@@ -1,25 +1,25 @@
-// kameo-nx-installer (from renut-nx-webinstaller): the page. The player chooses their disc image (lib/xiso.js) or the
-// folder the game was extracted to, and title update 2's package (with the DLC's, if they have them: lib/kameo_files.js);
-// worker.js makes the Switch package from them (the shaders included: the NRO carries none of the game's) and sw.js
-// serves it as a download.
-// From bejeweled3-nx-installer's app.js (ChanseyIsTheBest; nfsmw-nx-installer's download flow, StevensND; GPL-3.0),
-// without its languages for this prototype.
+// rr6-nx-installer (from kameo-nx-installer, renut-nx-webinstaller): the page. The player chooses their disc image
+// (lib/xiso.js) or the folder the game was extracted to, and the DLC packages if they have them; worker.js makes the
+// Switch package from them (the RRM archives packed as LZ4 blocks, lib/lz4b.js) and sw.js serves it as a download.
+// From kameo-nx-installer's app.js (bejeweled3-nx-installer's, ChanseyIsTheBest; nfsmw-nx-installer's download flow,
+// StevensND; GPL-3.0).
 import { listXiso } from './lib/xiso.js';
-import { describePackages } from './lib/kameo_files.js';
 
 const folderInput = document.getElementById('folder');
 const isoInput = document.getElementById('iso');
 const chosen = document.getElementById('chosen');
 const detected = document.getElementById('detected');
-const packagesInput = document.getElementById('packages');
-const packagesChosen = document.getElementById('packages-chosen');
-const packagesDetected = document.getElementById('packages-detected');
+const dlcInput = document.getElementById('dlc');
+const dlcFolderInput = document.getElementById('dlc-folder');
+const dlcChosen = document.getElementById('dlc-chosen');
+const dlcDetected = document.getElementById('dlc-detected');
 const create = document.getElementById('create');
 const bar = document.getElementById('bar');
 const logBox = document.getElementById('log');
 const manifest = fetch('./release/manifest.json').then((r) => r.json());
+const ARCHIVES = ['RRM.DAT', 'RRM2.DAT', 'RRM3.DAT'];
 let entries = null;
-let packages = null;  // the title update's package (and the DLC's), checked
+let dlc = [];  // [{ path (under dlc/), size, file }]
 let busy = false;
 let downloadFrame = null;
 
@@ -47,7 +47,7 @@ function show(state, text, box = detected) {
 }
 
 function updateCreate() {
-  create.disabled = busy || !entries || !packages;
+  create.disabled = busy || !entries;
 }
 
 // list: [{ path (in the game), size, file, offset (in a disc image) }]
@@ -56,7 +56,7 @@ async function choose(list, what) {
   updateCreate();
   const total = list.reduce((n, e) => n + e.size, 0);
   chosen.textContent = `${what}: ${list.length} files, ${formatSize(total)}`;
-  const xex = list.find((e) => e.path === 'default.xex');
+  const xex = list.find((e) => e.path.toLowerCase() === 'default.xex');
   if (!xex) {
     show('bad', 'No default.xex: choose the folder the game disc was extracted to, or the disc image.');
     return;
@@ -69,37 +69,53 @@ async function choose(list, what) {
     show('bad', `This default.xex is not one this release supports. Its SHA-256: ${hash}`);
     return;
   }
-  if (!list.some((e) => /\.lvl$/i.test(e.path))) {
-    show('bad', 'The level files are missing: choose the whole extracted game.');
+  const missing = ARCHIVES.filter((name) => !list.some((e) => e.path.toUpperCase() === name));
+  if (missing.length) {
+    show('bad', `${missing.join(', ')} ${missing.length === 1 ? 'is' : 'are'} missing: choose the whole extracted game.`);
     return;
   }
-  show('good', `Kameo: Elements of Power (${build.edition}), supported.`);
+  show('good', `Ridge Racer 6 (${build.edition}), supported.`);
   entries = list;
   updateCreate();
 }
 
-// Title update 2's package (required: kameo-nx is the updated game) and the DLC's (optional),
-// read in place: nothing is extracted until the zip is written.
-packagesInput.addEventListener('change', async (event) => {
+// The DLC: Xbox 360 packages ("LIVE", "PIRS" or "CON "), copied whole to switch/rr6-nx/dlc/; the game installs them.
+async function chooseDlc(list) {
+  dlc = [];
+  if (!list.length) {
+    dlcChosen.textContent = 'None.';
+    dlcDetected.hidden = true;
+    return;
+  }
+  const kept = [];
+  let skipped = 0;
+  for (const e of list) {
+    const magic = String.fromCharCode(...new Uint8Array(await e.file.slice(0, 4).arrayBuffer()));
+    if (e.size >= 0x1000 && (magic === 'LIVE' || magic === 'PIRS' || magic === 'CON ')) kept.push(e);
+    else skipped++;
+  }
+  const total = kept.reduce((n, e) => n + e.size, 0);
+  dlcChosen.textContent = `${kept.length} package${kept.length === 1 ? '' : 's'}, ${formatSize(total)}` +
+    (skipped ? ` (${skipped} other file${skipped === 1 ? '' : 's'} left out)` : '');
+  if (!kept.length) {
+    show('bad', 'None of these is an Xbox 360 package.', dlcDetected);
+    return;
+  }
+  show('good', `${kept.length} DLC package${kept.length === 1 ? '' : 's'} will go to switch/rr6-nx/dlc/.`, dlcDetected);
+  dlc = kept;
+}
+
+dlcInput.addEventListener('change', async (event) => {
   const files = [...event.target.files];
   event.target.value = '';
-  if (!files.length) return;
-  packages = null;
-  updateCreate();
-  packagesChosen.textContent = files.map((f) => `${f.name} (${formatSize(f.size)})`).join(', ');
-  try {
-    const kinds = await describePackages(files);
-    if (!kinds.update) {
-      show('bad', 'Title update 2 is missing: choose its package (TU_16L61UI_...) together with the DLC.', packagesDetected);
-      return;
-    }
-    show('good', 'Title update 2' + (kinds.dlc.length ? `, with the DLC (${kinds.dlc.length} pack${kinds.dlc.length === 1 ? '' : 's'})` : ', without the DLC') +
-         '.', packagesDetected);
-    packages = files;
-    updateCreate();
-  } catch (error) {
-    show('bad', error.message, packagesDetected);
-  }
+  await chooseDlc(files.map((file) => ({ path: file.name, size: file.size, file })));
+});
+
+dlcFolderInput.addEventListener('change', async (event) => {
+  const files = [...event.target.files];
+  event.target.value = '';
+  // the paths inside the chosen folder (its own name dropped): the game walks into subfolders of dlc/
+  await chooseDlc(files.map((file) => ({ path: file.webkitRelativePath.split('/').slice(1).join('/'), size: file.size, file })));
 });
 
 folderInput.addEventListener('change', async (event) => {
@@ -146,7 +162,7 @@ const helper = downloadHelper();
 helper.catch(() => {});
 
 create.addEventListener('click', async () => {
-  if (!entries || !packages || busy) return;
+  if (!entries || busy) return;
   let controller;
   try {
     controller = await helper;
@@ -173,22 +189,22 @@ create.addEventListener('click', async () => {
       log(data.text);
     } else if (data.type === 'progress') {
       bar.value = data.fraction;
-    } else if (data.type === 'size') {
+    } else if (data.type === 'start') {
       const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
       const ack = new MessageChannel();
       const registered = new Promise((resolve) => (ack.port1.onmessage = resolve));
-      controller.postMessage({ type: 'download', id, filename: 'kameo-nx.zip', size: data.size }, [channel.port2, ack.port2]);
+      controller.postMessage({ type: 'download', id, filename: 'rr6-nx.zip', size: null }, [channel.port2, ack.port2]);
       await registered;
       // a hidden frame opens the download: its request is a navigation, which always reaches the service worker
       downloadFrame?.remove();
       downloadFrame = document.createElement('iframe');
       downloadFrame.hidden = true;
-      downloadFrame.src = `./download/${id}/kameo-nx.zip`;
+      downloadFrame.src = `./download/${id}/rr6-nx.zip`;
       document.body.appendChild(downloadFrame);
-      log(`Download started: kameo-nx.zip, ${formatSize(data.size)}. Keep this page open until it finishes.`);
+      log(`Download started: rr6-nx.zip, about ${formatSize(data.estimate)}. Keep this page open until it finishes.`);
     } else if (data.type === 'done') {
       bar.value = 1;
-      log(`Finished in ${data.seconds} s.`);
+      log(`Finished in ${data.seconds} s: rr6-nx.zip is ${formatSize(data.size)}.`);
       finish();
     } else if (data.type === 'error') {
       log(`Error: ${data.message}`, true);
@@ -199,7 +215,5 @@ create.addEventListener('click', async () => {
     log(`Error: ${event.message}`, true);
     finish();
   };
-  // Who compiles the shaders, the page or the console (worker.js)
-  const compile = document.querySelector('input[name="shaders"]:checked').value === 'page';
-  worker.postMessage({ entries, packages, compile, port: channel.port1 }, [channel.port1]);
+  worker.postMessage({ entries, dlc, port: channel.port1 }, [channel.port1]);
 });

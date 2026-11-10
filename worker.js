@@ -1,26 +1,16 @@
-// kameo-nx-installer (from renut-nx-webinstaller): makes the package off the page's thread (lib/build.js) and streams the zip to the download
-// service worker (sw.js). From bejeweled3-nx-installer's worker.js (nfsmw-nx-installer's download stream, GPL-3.0).
-import createRenutHlslModule from './wasm/renut_hlsl.mjs';
-import { loadPyodide } from './vendor/pyodide/pyodide.mjs';
-import { loadPython } from './lib/py.js';
-import { compileVariants, dumpContainers, makeGlsl, packageShaders, variantJobs } from './lib/build.js';
-import { nroShaders } from './lib/nro.js';
-import { glslMaker, uamCompile, workerPool } from './lib/pool.js';
-import { parseVariants } from './lib/variants.js';
-import { dlcArchives, packageFiles } from './lib/kameo_files.js';
-import { ZipWriter, zipSize } from './lib/zip.js';
+// rr6-nx-installer (from kameo-nx-installer, renut-nx-webinstaller): makes the package off the page's thread and streams
+// the zip to the download service worker (sw.js). From kameo-nx-installer's worker.js (bejeweled3-nx-installer's,
+// nfsmw-nx-installer's download stream, GPL-3.0).
+//
+// rr6-nx carries its shaders (Ridge Racer 6 keeps all 176 in default.xex), so the page makes none: it checks the game,
+// packs the three RRM archives as LZ4 blocks (lib/lz4b.js on lz4_worker.js, one per core) and writes the zip.
+import { pack, SUFFIX } from './lib/lz4b.js';
+import { workerPool } from './lib/pool.js';
+import { ZipWriter } from './lib/zip.js';
 
-const ROOT = 'switch/kameo-nx';
+const ROOT = 'switch/rr6-nx';
+const PACKED = new Set(['RRM.DAT', 'RRM2.DAT', 'RRM3.DAT']);
 const log = (text) => postMessage({ type: 'log', text });
-// The steps' shares of the bar: the shaders take the time, the zip the bytes.
-const STEPS = { dump: [0, 0.12], glsl: [0.12, 0.55], uam: [0.55, 0.8], zip: [0.8, 1] };
-// The console compiles the shaders, so no uam step
-const STEPS_NO_COMPILE = { dump: [0, 0.16], glsl: [0.16, 0.73], zip: [0.73, 1] };
-let steps = STEPS;
-const progress = (step) => (f) => {
-  const [a, b] = steps[step];
-  postMessage({ type: 'progress', fraction: a + (b - a) * f });
-};
 
 async function fetchBytes(url) {
   const response = await fetch(url);
@@ -66,20 +56,12 @@ function portSink(port) {
 }
 
 // The game's files: { path (in the game folder), size, read(offset, length) } from the page's Files, or for
-// test/browser.html from the test server (HTTP range requests).
-// A file inside a disc image has the image as its file and its offset there (lib/xiso.js).
+// test/browser.html from the test server (HTTP range requests). A file inside a disc image has the image as its file
+// and its offset there (lib/xiso.js).
 function gameFiles(entries) {
   return entries.map((e) => ({
     path: e.path,
     size: e.size,
-    // the whole file for the shader dump: a Blob of the player's file, which Python reads without a copy in memory
-    // first (lib/py.js); the test server's, its bytes (fetched Blobs fill the browser's blob storage: test/browser.html
-    // stopped after 2 GB of them)
-    blob: e.file ? async () => (e.offset === undefined ? e.file : e.file.slice(e.offset, e.offset + e.size)) : async () => {
-      const r = await fetch(e.url);
-      if (!r.ok) throw new Error(`${e.url}: HTTP ${r.status}`);
-      return new Uint8Array(await r.arrayBuffer());
-    },
     read: e.file
       ? async (offset, length) => {
           const at = (e.offset || 0) + offset;
@@ -97,15 +79,14 @@ async function* chunks(file, size = 8 << 20) {
   for (let at = 0; at < file.size; at += size) yield await file.read(at, Math.min(size, file.size - at));
 }
 
-const quiet = () => ({ print: () => {}, printErr: () => {} });
-
-// count Web Workers of a script, each started and ready, as lib/pool.js takes them
-function startWorkers(script, count) {
+// count lz4_worker.js workers, each started and ready, as lib/pool.js takes them
+function startWorkers(count) {
   return Promise.all(Array.from({ length: count }, () => new Promise((resolve, reject) => {
-    const w = new Worker(script, { type: 'module' });
-    w.onerror = (e) => reject(new Error(`${script}: ${e.message}`));
+    const w = new Worker('./lz4_worker.js', { type: 'module' });
+    w.onerror = (e) => reject(new Error(`lz4_worker.js: ${e.message}`));
     w.addEventListener('message', ({ data }) => {
-      if (data.ready) resolve({ w, post: (m, t) => w.postMessage(m, t), onMessage: (cb) => w.addEventListener('message', ({ data: d }) => cb(d)) });
+      if (data.ready) resolve({ w, version: data.version, post: (m, t) => w.postMessage(m, t),
+                                onMessage: (cb) => w.addEventListener('message', ({ data: d }) => cb(d)) });
     }, { once: true });
   })));
 }
@@ -115,118 +96,66 @@ self.onmessage = async ({ data }) => {
   const started = performance.now();
   const seconds = () => Math.round((performance.now() - started) / 1000);
   let workers = [];
-  const stopWorkers = () => { for (const x of workers) x.w.terminate(); workers = []; };
-  // renut-nx-webinstaller's option: compile false leaves out deko3d_shaders.bin, and pipeline_list.bin with it: with that list
-  // and no cache, the prebuild workers would compile every shader in it. The NRO compiles each shader when a draw first
-  // needs it and keeps it in a new cache file.
-  const compile = data.compile !== false;
-  if (!compile) steps = STEPS_NO_COMPILE;
   try {
     const manifest = JSON.parse(new TextDecoder().decode(await fetchBytes('./release/manifest.json')));
     const files = gameFiles(data.entries);
-    const xex = files.find((f) => f.path === 'default.xex');
+    const xex = files.find((f) => f.path.toLowerCase() === 'default.xex');
     if (!xex) throw new Error('no default.xex in the folder: choose the folder the game was extracted to');
     const xexHash = await sha256(await xex.read(0, xex.size));
     const build = manifest.builds.find((b) => b.xex_sha256 === xexHash);
     if (!build) throw new Error(`this default.xex is not one this release supports (SHA-256 ${xexHash})`);
-    // title update 2's files (and the DLC's packages) from the packages, read in place
-    const updateFiles = await packageFiles(data.packages || []);
-    const xexp = updateFiles.find((f) => f.path === 'game_root/default.xexp');
-    const xexpHash = await sha256(await xexp.read(0, xexp.size));
-    if (build.xexp_sha256 && xexpHash !== build.xexp_sha256) {
-      throw new Error(`this title update is not the one the program was made for (default.xexp SHA-256 ${xexpHash})`);
-    }
 
-    log('Downloading the program and the tools...');
-    const [nro, variantsText, shaderCommon] = await Promise.all([
-      fetchChecked(build.nro, build.nro_sha256),
-      compile ? fetchBytes('./release/variants.txt').then((b) => new TextDecoder().decode(b)) : null,
-      fetchBytes('./release/shader_common.h'),
-    ]);
-    const extras = await Promise.all(build.files.filter((f) => compile || f.path !== 'pipeline_list.bin')
-      .map(async (f) => ({ ...f, bytes: await fetchChecked(f.source, f.sha256) })));
-    const tr = await createRenutHlslModule(quiet());
-    // the shader dump's Pyodide (the GLSL workers have their own)
-    const py = await loadPython(loadPyodide, new URL('./vendor/pyodide/', location.href).href,
-                                async (n) => new TextDecoder().decode(await fetchBytes(`./py/${n}`)));
-    log(`Tools ready (${seconds()} s). Looking for the shaders in the game's files...`);
+    log('Downloading the program and its files...');
+    const nro = await fetchChecked(build.nro, build.nro_sha256);
+    const extras = await Promise.all(build.files.map(async (f) => ({ ...f, bytes: await fetchChecked(f.source, f.sha256) })));
 
-    // 1-4: the shaders' GLSL and the shader table, from the game's files
-    const packed = await dlcArchives(data.packages || []);
-    const whole = (f) => async () => f.read(0, f.size);
-    const shaderFiles = [
-      ...files.filter((f) => /\.(lvl|mdl)$/i.test(f.path)).map((f) => ({ path: f.path, read: f.blob })),
-      ...packed.map((f) => ({ path: f.path, read: whole(f) })),
-    ].sort((a, b) => (a.path < b.path ? -1 : 1));
-    const containers = await dumpContainers(shaderFiles, py, log, progress('dump'));
-    // A GLSL worker (Pyodide, numpy, DXC) holds about 0.5 GB: at most 8 of them, fewer on a device with less memory
-    // (navigator.deviceMemory, in GB, Chromium only). A uam worker is small: one per core.
+    // the packing workers: one per core but one (the zip and the reads run here)
     const cores = Math.max(1, Math.min(16, (navigator.hardwareConcurrency || 4) - 1));
-    const glslThreads = Math.max(1, Math.min(cores, 8, navigator.deviceMemory || 8));
-    log(`Making the shaders' GLSL on ${glslThreads} threads...`);
-    workers = await startWorkers('./glsl_worker.js', glslThreads);
-    const errors = [];
-    const { shaders, failed } = await makeGlsl(containers, tr, glslMaker(workerPool(workers)), shaderCommon, log,
-                                               progress('glsl'), (e) => errors.push(e));
-    stopWorkers();
-    if (failed) throw new Error(`${failed} shaders could not be made: ${errors.slice(0, 3).join('; ')}`);
-    const glslPackage = packageShaders(shaders);
+    workers = await startWorkers(cores);
+    const lz4 = workerPool(workers);
+    const compress = (bytes, level) => lz4.run({ bytes, level }, [bytes.buffer]).then((r) => r.bytes);
+    const v = workers[0].version;
+    log(`LZ4 ${Math.floor(v / 10000)}.${Math.floor(v / 100) % 100}.${v % 100} ready on ${cores} threads (${seconds()} s).`);
 
-    const glslHash = await sha256(glslPackage);
-    let cache = null;
-    if (compile) {
-      // 5: every variant the game uses, compiled for the console (and the NRO's own shaders' variants)
-      const glslOf = new Map(shaders.map((s) => [s.name, s.glsl]));
-      for (const [stem, glsl] of nroShaders(nro)) if (!glslOf.has(stem)) glslOf.set(stem, glsl);
-      const { jobs } = variantJobs(parseVariants(variantsText), glslOf);
-      log(`Compiling ${jobs.length} shader variants for the Switch on ${cores} threads...`);
-      workers = await startWorkers('./uam_worker.js', cores);
-      const compiled = await compileVariants(jobs, uamCompile(workerPool(workers)), cores * 2, progress('uam'));
-      stopWorkers();
-      const { failures } = compiled;
-      if (failures.length) throw new Error(`${failures.length} shader variants did not compile: ${failures[0].error.slice(0, 200)}`);
-      cache = compiled.cache;
-      const cacheHash = await sha256(cache);
-      const checked = build.deko3d_glsl_sha256 === glslHash && build.deko3d_shaders_sha256 === cacheHash;
-      log(`Shaders done in ${seconds()} s: ${shaders.length} shaders, ${jobs.length} variants` +
-          (build.deko3d_glsl_sha256 && !packed.length ? (checked ? ', identical to the release\'s reference build' : ' (NOT the reference build\'s: ' +
-            `${glslHash.slice(0, 12)} / ${cacheHash.slice(0, 12)})`) : ''));
-    } else {
-      log(`Shaders done in ${seconds()} s: ${shaders.length} shaders, left for the Switch to compile` +
-          (build.deko3d_glsl_sha256 && !packed.length ? (build.deko3d_glsl_sha256 === glslHash ? ', identical to the release\'s reference build'
-            : ` (NOT the reference build's: ${glslHash.slice(0, 12)})`) : ''));
-    }
+    const dlc = gameFiles(data.dlc || []);
+    const game = files.filter((f) => !f.path.startsWith('$SystemUpdate/'));
+    const totalIn = nro.length + extras.reduce((n, f) => n + f.bytes.length, 0) + game.reduce((n, f) => n + f.size, 0) +
+                    dlc.reduce((n, f) => n + f.size, 0);
+    let doneIn = 0;
+    const counted = (n) => { doneIn += n; postMessage({ type: 'progress', fraction: doneIn / totalIn }); };
+    // the zip's size is known only once the archives are packed: the download starts without one (about 80 % of them)
+    const estimate = totalIn - game.filter((f) => PACKED.has(f.path.toUpperCase())).reduce((n, f) => n + f.size, 0) * 0.2;
+    postMessage({ type: 'start', estimate });
 
-    // the zip: the program, its settings, the shaders, and the game's files
-    // the update's default.xexp replaces one a folder may already have
-    const game = files.filter((f) => !f.path.startsWith('$SystemUpdate/') && f.path !== 'default.xexp');
-    const entries = [
-      { path: `${ROOT}/kameo-nx.nro`, size: nro.length },
-      ...extras.map((f) => ({ path: `${ROOT}/${f.path}`, size: f.bytes.length })),
-      { path: `${ROOT}/deko3d_glsl.bin`, size: glslPackage.length },
-      ...(cache ? [{ path: `${ROOT}/deko3d_shaders.bin`, size: cache.length }] : []),
-      ...game.map((f) => ({ path: `${ROOT}/game_root/${f.path}`, size: f.size })),
-      ...updateFiles.map((f) => ({ path: `${ROOT}/${f.path}`, size: f.size })),
-    ];
-    const total = zipSize(entries);
-    postMessage({ type: 'size', size: total });
     const zip = new ZipWriter(sink);
-    let written = 0;
-    const counted = (n) => { written += n; progress('zip')(written / total); };
-    await zip.addBytes(entries[0].path, nro); counted(nro.length);
+    await zip.addBytes(`${ROOT}/rr6-nx.nro`, nro); counted(nro.length);
     for (const f of extras) { await zip.addBytes(`${ROOT}/${f.path}`, f.bytes); counted(f.bytes.length); }
-    await zip.addBytes(`${ROOT}/deko3d_glsl.bin`, glslPackage); counted(glslPackage.length);
-    if (cache) { await zip.addBytes(`${ROOT}/deko3d_shaders.bin`, cache); counted(cache.length); }
+    let packedIn = 0, packedOut = 0;
     for (const f of game) {
-      await zip.addFile(`${ROOT}/game_root/${f.path}`, f.size, chunks(f), (c) => counted(c.length));
+      if (PACKED.has(f.path.toUpperCase())) {
+        const t0 = performance.now();
+        log(`Packing ${f.path} (${(f.size / 1048576).toFixed(0)} MB)...`);
+        const size = await zip.addStream(`${ROOT}/game_root/${f.path}${SUFFIX}`,
+                                         pack(f, compress, { inFlight: cores * 4, onRaw: counted }));
+        packedIn += f.size;
+        packedOut += size;
+        const s = (performance.now() - t0) / 1000;
+        log(`  ${f.path}${SUFFIX}: ${(size / 1048576).toFixed(0)} MB (${(size / f.size * 100).toFixed(1)} %), ` +
+            `${s.toFixed(0)} s (${(f.size / 1048576 / Math.max(s, 0.001)).toFixed(0)} MB/s)`);
+      } else {
+        await zip.addFile(`${ROOT}/game_root/${f.path}`, f.size, chunks(f), (c) => counted(c.length));
+      }
     }
-    for (const f of updateFiles) {
-      await zip.addFile(`${ROOT}/${f.path}`, f.size, chunks(f), (c) => counted(c.length));
+    for (const f of dlc) {
+      await zip.addFile(`${ROOT}/dlc/${f.path}`, f.size, chunks(f), (c) => counted(c.length));
     }
-    await zip.finish();
-    postMessage({ type: 'done', seconds: seconds() });
+    const total = await zip.finish();
+    log(`The archives: ${(packedIn / 1048576).toFixed(0)} MB packed to ${(packedOut / 1048576).toFixed(0)} MB, ` +
+        `${((packedIn - packedOut) / 1048576).toFixed(0)} MB saved.`);
+    for (const x of workers) x.w.terminate();
+    postMessage({ type: 'done', seconds: seconds(), size: total });
   } catch (error) {
-    stopWorkers();
+    for (const x of workers) x.w.terminate();
     const message = error.message || String(error);
     sink.fail(message);
     postMessage({ type: 'error', message });
